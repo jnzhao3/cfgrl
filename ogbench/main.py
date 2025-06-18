@@ -39,6 +39,7 @@ flags.DEFINE_float('eval_gaussian', None, 'Action Gaussian noise for evaluation.
 flags.DEFINE_integer('video_episodes', 1, 'Number of video episodes for each task.')
 flags.DEFINE_integer('video_frame_skip', 3, 'Frame skip for videos.')
 flags.DEFINE_integer('eval_on_cpu', 0, 'Whether to evaluate on CPU.')
+flags.DEFINE_string('train_dataset_path', None, 'Path to the training dataset (optional).')
 
 config_flags.DEFINE_config_file('agent', 'agents/cfgrl.py', lock_config=False)
 
@@ -57,6 +58,44 @@ def main(_):
     # Set up environment and dataset.
     config = FLAGS.agent
     env, train_dataset, val_dataset = make_gc_env_and_datasets(FLAGS.env_name, frame_stack=config['frame_stack'])
+    if FLAGS.train_dataset_path:
+        from ogbench.relabel_utils import add_oracle_reps, relabel_dataset
+        from ogbench.utils import load_dataset
+
+        env_name = FLAGS.env_name
+        ob_dtype = np.uint8 if ('visual' in env_name or 'powderworld' in env_name) else np.float32
+        action_dtype = np.int32 if 'powderworld' in env_name else np.float32
+        specificed_train_dataset = load_dataset(
+            FLAGS.train_dataset_path,
+            ob_dtype=ob_dtype,
+            action_dtype=action_dtype,
+            compact_dataset=False,
+            add_info=True,
+        )
+        splits = env_name.split('-')
+        if 'singletask' in splits:
+            # Add reward information to the datasets.
+            relabel_dataset(env_name, env, specificed_train_dataset)
+
+        if 'oraclerep' in splits:
+            # Add oracle goal representations to the datasets.
+            add_oracle_reps(env_name, env, specificed_train_dataset)
+
+        # if not add_info:
+        # Remove information keys.
+        # for k in ['qpos', 'qvel', 'button_states']:
+        #     if k in specificed_train_dataset:
+        #         del specificed_train_dataset[k]
+
+        assert 'diverse' not in splits and 'play' not in splits and 'umaze' not in splits, 'Not supported.'
+        # 'pen' in env_name or 'hammer' in env_name or 'relocate' in env_name or 'door' in env_name:
+        assert 'pen' not in env_name and 'hammer' not in env_name and 'relocate' not in env_name and 'door' not in env_name, 'Not supported.'
+        specificed_train_dataset = Dataset.create(**specificed_train_dataset)
+
+        action_clip_eps = 1e-5
+        train_dataset = specificed_train_dataset.copy(
+            add_or_replace=dict(actions=np.clip(specificed_train_dataset['actions'], -1 + action_clip_eps, 1 - action_clip_eps))
+        )
 
     dataset_class = {
         'GCDataset': GCDataset,

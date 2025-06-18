@@ -77,8 +77,22 @@ def evaluate(
         step = 0
         render = []
         while not done:
+            # import time
+            # start = time.time()
+            # mult_goals = goal is not None and goal.ndim > 1
             action = actor_fn(observations=observation, goals=goal, temperature=eval_temperature)
             action = np.array(action)
+            # end = time.time()
+            # print(f"Action sampling took {end - start:.4f} seconds")
+
+            # multiple_goals = np.array([goal, goal])
+            # start = time.time()
+            # mult_goals = multiple_goals is not None and multiple_goals.ndim > 1
+            # action = actor_fn(observations=observation, goals=multiple_goals, temperature=eval_temperature, mult_goals=mult_goals)
+            # action = np.array(action)
+            # end = time.time()
+            # print(f"Action sampling with multiple goals took {end - start:.4f} seconds")
+
             if eval_gaussian is not None:
                 action = np.random.normal(action, eval_gaussian)
             action = np.clip(action, -1, 1)

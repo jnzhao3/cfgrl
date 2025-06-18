@@ -67,14 +67,20 @@ class CFGRLAgent(flax.struct.PyTreeNode):
 
         return self.replace(network=new_network, rng=new_rng), info
 
+    # @partial(jax.jit, static_argnames=('mult_goals',))
     @jax.jit
     def sample_actions(
         self,
         observations,
         goals=None,
         seed=None,
+        # mult_goals=False,
         temperature=1.0,
     ):
+        mult_goals = goals is not None and goals.ndim > 1
+        if mult_goals and goals is not None:
+            assert goals.shape[1:-1] == observations.shape[:-1], f"Goals must have the same batch dimensions as observations: {goals.shape} vs {observations.shape}."
+        # goals: [N, ..., goal_dim]
         """Sample actions from the actor."""
         if self.config['encoder'] is not None:
             observations = self.network.select('actor_flow_encoder')(observations)
@@ -86,15 +92,35 @@ class CFGRLAgent(flax.struct.PyTreeNode):
         )
 
         unc_embed = self.network.select('unc_embed')()[0]
+        if mult_goals:
+                observations = jnp.repeat(observations[None], goals.shape[0], axis=0)
+                actions = jnp.repeat(actions[None], goals.shape[0], axis=0)
+                # t = jnp.repeat(t[None], goals.shape[0], axis=0)
+                unc_embed = jnp.repeat(unc_embed[None], goals.shape[0], axis=0)
+                
         for i in range(self.config['flow_steps']):
             t = jnp.full((*observations.shape[:-1], 1), i / self.config['flow_steps'])
 
+            # unc_vels = self.network.select('actor_flow')(observations, actions, t, goals=unc_embed, is_encoded=True)
+            # if mult_goals:
+            #     # actions = jnp.repeat(actions[None], goals.shape[0], axis=0)
+            #     unc_vels = self.network.select('actor_flow')(observations, actions, t, goals=unc_embed, is_encoded=True)
+            #     cond_vels = self.network.select('actor_flow')(observations, actions, t, goals=goals, is_encoded=True)
+            #     unc_vels = unc_vels.mean(axis=0)  # Average over goals
+            #     cond_vels = cond_vels.mean(axis=0)  # Average over goals
+            # else:
             unc_vels = self.network.select('actor_flow')(observations, actions, t, goals=unc_embed, is_encoded=True)
             cond_vels = self.network.select('actor_flow')(observations, actions, t, goals=goals, is_encoded=True)
+
+            if mult_goals:
+                unc_vels = unc_vels.mean(axis=0)  # Average over goals
+                cond_vels = cond_vels.mean(axis=0)
             vels = unc_vels + self.config['cfg'] * (cond_vels - unc_vels)
 
             actions = actions + vels / self.config['flow_steps']
 
+        if mult_goals:
+            actions = actions[0]
         actions = jnp.clip(actions, -1, 1)
 
         return actions
